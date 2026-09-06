@@ -2,8 +2,8 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
-import { Download, X } from "lucide-react";
-import { platformSelectClass } from "@/components/platform/platform-ui";
+import { Download, Search, X } from "lucide-react";
+import { platformInputClass, platformSelectClass } from "@/components/platform/platform-ui";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import type { AlcanceValue } from "@/components/campaign/mapa-geografico";
@@ -13,7 +13,6 @@ type Departamento = { id: string; nombre: string };
 type Municipio = { id: string; nombre: string; id_departamento: string };
 type Comuna = { id: number; nombre: string; id_municipio: string | null };
 type Barrio = { id: number; nombre: string; id_comuna: number };
-type Puesto = { id: number; nombre: string };
 
 type VotanteConRoles = {
   id: number;
@@ -66,6 +65,43 @@ function nombreRelacion(
   return rel.nombre;
 }
 
+function Select({
+  label,
+  value,
+  options,
+  disabled,
+  placeholder,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  options: { id: string | number; nombre: string }[];
+  disabled?: boolean;
+  placeholder: string;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <div className="w-[180px]">
+      <label className="mb-1 block text-xs font-medium text-neutral-500">
+        {label}
+      </label>
+      <select
+        value={value}
+        disabled={disabled}
+        onChange={(e) => onChange(e.target.value)}
+        className={cn(platformSelectClass, disabled && "opacity-60")}
+      >
+        <option value="">{placeholder}</option>
+        {options.map((o) => (
+          <option key={o.id} value={o.id}>
+            {o.nombre}
+          </option>
+        ))}
+      </select>
+    </div>
+  );
+}
+
 export function CoberturaLiderTab({
   campaignId,
   initialPuestos,
@@ -82,6 +118,7 @@ export function CoberturaLiderTab({
   const [error, setError] = useState<string | null>(null);
   const [loadAttempt, setLoadAttempt] = useState(0);
   const [selectedLeaderId, setSelectedLeaderId] = useState<number | null>(null);
+  const [searchInput, setSearchInput] = useState("");
 
   const alcance: AlcanceValue = initialAlcance ?? { tipo: "nacional" };
   const scopeDept =
@@ -241,7 +278,13 @@ export function CoberturaLiderTab({
   }, [allVoters]);
 
   const ranking = useMemo(() => {
+    const searchLower = searchInput.trim().toLowerCase();
     return leaders
+      .filter((leader) => {
+        if (!searchLower) return true;
+        const fullName = `${leader.nombres} ${leader.apellidos}`.toLowerCase();
+        return fullName.includes(searchLower) || leader.documento.toLowerCase().includes(searchLower);
+      })
       .map((leader) => {
         const referidosDelLider = eligible.filter(
           (v) => v.id_lider_directo === leader.id
@@ -280,7 +323,7 @@ export function CoberturaLiderTab({
         const nb = `${b.leader.nombres} ${b.leader.apellidos}`;
         return na.localeCompare(nb, "es");
       });
-  }, [leaders, eligible, puestoNombre]);
+  }, [leaders, eligible, puestoNombre, searchInput]);
 
   const totalReferidos = useMemo(
     () => ranking.reduce((acc, r) => acc + r.referidos, 0),
@@ -332,6 +375,7 @@ export function CoberturaLiderTab({
 
   function clearFilters() {
     setFilters(DEFAULT_FILTERS);
+    setSearchInput("");
   }
 
   function descargarExcel() {
@@ -357,47 +401,34 @@ export function CoberturaLiderTab({
     XLSX.writeFile(wb, `cobertura-lider-campana-${campaignId}-${fecha}.xlsx`);
   }
 
-  function Select({
-    label,
-    value,
-    options,
-    disabled,
-    placeholder,
-    onChange,
-  }: {
-    label: string;
-    value: string;
-    options: { id: string | number; nombre: string }[];
-    disabled?: boolean;
-    placeholder: string;
-    onChange: (value: string) => void;
-  }) {
-    return (
-      <div className="w-[180px]">
-        <label className="mb-1 block text-xs font-medium text-neutral-500">
-          {label}
-        </label>
-        <select
-          value={value}
-          disabled={disabled}
-          onChange={(e) => onChange(e.target.value)}
-          className={cn(platformSelectClass, disabled && "opacity-60")}
-        >
-          <option value="">{placeholder}</option>
-          {options.map((o) => (
-            <option key={o.id} value={o.id}>
-              {o.nombre}
-            </option>
-          ))}
-        </select>
-      </div>
-    );
-  }
-
   return (
     <div className="space-y-4">
       <div className="rounded-xl border border-neutral-200 bg-white p-4 shadow-sm shadow-neutral-200/60">
         <div className="flex flex-wrap items-end gap-3">
+          <div className="min-w-[200px] flex-1">
+            <label className="mb-1 block text-xs font-medium text-neutral-500">
+              Buscar líder
+            </label>
+            <div className="relative">
+              <Search className="absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-neutral-400" />
+              <input
+                type="text"
+                placeholder="Nombre o documento..."
+                value={searchInput}
+                onChange={(e) => setSearchInput(e.target.value)}
+                className={cn(platformInputClass, "pl-8 text-xs")}
+              />
+              {searchInput && (
+                <button
+                  type="button"
+                  onClick={() => setSearchInput("")}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 text-neutral-400 hover:text-neutral-600"
+                >
+                  <X className="size-3.5" />
+                </button>
+              )}
+            </div>
+          </div>
           {cascade.showDepartamento && (
             <Select
               label="Departamento"
@@ -478,7 +509,7 @@ export function CoberturaLiderTab({
             placeholder="Todos"
             onChange={(value) => changeFilter("id_puesto_votacion", value)}
           />
-          {hasActiveFilters && (
+          {(hasActiveFilters || searchInput) && (
             <div className="flex items-end pb-0.5">
               <Button
                 variant="ghost"
