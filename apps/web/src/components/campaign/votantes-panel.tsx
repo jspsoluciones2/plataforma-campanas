@@ -99,6 +99,8 @@ const ESTADOS = [
 
 const LIST_COLUMNAS = `id, nombres, apellidos, documento, tipo_documento, sexo, telefono,
   fecha_nacimiento, direccion, mesa, estado, creado_en, id_tipo_novedad, detalle_novedad,
+  id_rol, id_lugar_trabajo, id_departamento, id_municipio, id_barrio_votante,
+  id_lider_directo, id_puesto_votacion,
   roles(nombre), lugares_trabajo(nombre), puestos_votacion(nombre, municipio),
   lider_directo:votantes(nombres, apellidos)`;
 
@@ -638,6 +640,13 @@ export function VotantesPanel({
             onToggleRow={toggleRow}
             onToggleAllPage={toggleAllPage}
             allPageSelected={allPageSelected}
+            roles={roles}
+            puestos={puestos}
+            lugaresTrabajo={lugaresTrabajo}
+            lideres={lideres}
+            departamentos={departamentos}
+            municipios={municipios}
+            barrios={barrios}
           />
 
           <div className="mt-3 flex items-center justify-between gap-3">

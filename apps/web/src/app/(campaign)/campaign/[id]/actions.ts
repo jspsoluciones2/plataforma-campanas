@@ -357,6 +357,106 @@ export async function updateVotanteNovedadAction(
   return { ok: true };
 }
 
+export async function updateVotanteAction(
+  campaignId: number,
+  formData: FormData
+) {
+  const { supabase, user } = await requireCampaignAccess(campaignId);
+
+  const puedeEditar = await userCanEditCampaign(user.id, campaignId);
+  if (!puedeEditar) {
+    return {
+      error:
+        "No tienes permiso para editar votantes. Se requiere rol editor o administrador de campaña.",
+    };
+  }
+
+  const id = Number(formData.get("id") ?? 0);
+  if (!id) return { error: "Votante no identificado." };
+
+  const nombres = textoTitulo(String(formData.get("nombres") ?? ""));
+  const apellidos = textoTitulo(String(formData.get("apellidos") ?? ""));
+  const documento = String(formData.get("documento") ?? "").trim();
+  const tipoDocumento = String(formData.get("tipo_documento") ?? "CC");
+  const sexo = String(formData.get("sexo") ?? "").trim();
+  const telefono = String(formData.get("telefono") ?? "").trim() || null;
+  const fechaNacimiento = String(formData.get("fecha_nacimiento") ?? "").trim();
+  const direccion = textoTituloOpcional(String(formData.get("direccion") ?? ""));
+  const idRol = Number(formData.get("id_rol") ?? 0);
+  const idLider = Number(formData.get("id_lider_directo") ?? 0);
+  const idPuesto = Number(formData.get("id_puesto_votacion") ?? 0);
+  const idLugarTrabajo = Number(formData.get("id_lugar_trabajo") ?? 0);
+  const idDepartamento = String(formData.get("id_departamento") ?? "").trim();
+  const idMunicipio = String(formData.get("id_municipio") ?? "").trim();
+  const idBarrioVotante = Number(formData.get("id_barrio_votante") ?? 0);
+  const mesa = textoTituloOpcional(String(formData.get("mesa") ?? ""));
+
+  if (!nombres || !apellidos || !documento) {
+    return { error: "Nombres, apellidos y documento son obligatorios." };
+  }
+
+  const { data: existing, error: fetchErr } = await supabase
+    .from("votantes")
+    .select("id, documento")
+    .eq("id", id)
+    .eq("id_campana", campaignId)
+    .maybeSingle();
+
+  if (fetchErr || !existing) {
+    return { error: "Votante no encontrado en esta campaña." };
+  }
+
+  if (documento !== existing.documento) {
+    const { data: dup } = await supabase
+      .from("votantes")
+      .select("id")
+      .eq("id_campana", campaignId)
+      .eq("documento", documento)
+      .neq("id", id)
+      .maybeSingle();
+    if (dup) {
+      return {
+        error: "Ya existe otro votante con ese documento en esta campaña.",
+      };
+    }
+  }
+
+  const { error } = await supabase
+    .from("votantes")
+    .update({
+      nombres,
+      apellidos,
+      documento,
+      tipo_documento: tipoDocumento,
+      sexo: sexo === "Masculino" || sexo === "Femenino" ? sexo : null,
+      telefono,
+      fecha_nacimiento: fechaNacimiento || null,
+      direccion,
+      id_rol: idRol || null,
+      id_lider_directo: !idLider ? null : idLider,
+      id_puesto_votacion: idPuesto || null,
+      id_lugar_trabajo: idLugarTrabajo || null,
+      id_departamento: idDepartamento || null,
+      id_municipio: idMunicipio || null,
+      id_barrio_votante: idBarrioVotante || null,
+      mesa,
+    })
+    .eq("id", id)
+    .eq("id_campana", campaignId);
+
+  if (error) {
+    if (error.code === "23505") {
+      return {
+        error: "Ya existe un votante con ese documento en la campaña.",
+      };
+    }
+    return { error: error.message };
+  }
+
+  revalidateCampaign(campaignId);
+  return { ok: true };
+}
+
 export type QuarantineResolveAction = "fusionar" | "descartar" | "escalar";
 
 export async function resolveQuarantineAction(
