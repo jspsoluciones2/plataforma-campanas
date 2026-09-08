@@ -102,6 +102,40 @@ function Select({
   );
 }
 
+/**
+ * Traverse hierarchy recursively (like the SQL recursive CTE).
+ * Returns all descendant voter IDs for a given leader.
+ */
+function buildHierarchy(
+  allVoters: VotanteConRoles[],
+  leaderId: number,
+  eligibleIds: Set<number>
+): Set<number> {
+  const descendants = new Set<number>();
+  const childrenMap = new Map<number, number[]>();
+  for (const v of allVoters) {
+    if (v.id_lider_directo != null) {
+      const arr = childrenMap.get(v.id_lider_directo);
+      if (arr) arr.push(v.id);
+      else childrenMap.set(v.id_lider_directo, [v.id]);
+    }
+  }
+  const stack = [leaderId];
+  while (stack.length > 0) {
+    const current = stack.pop()!;
+    const children = childrenMap.get(current);
+    if (!children) continue;
+    for (const childId of children) {
+      if (childId === leaderId) continue;
+      if (!eligibleIds.has(childId)) continue;
+      if (descendants.has(childId)) continue;
+      descendants.add(childId);
+      stack.push(childId);
+    }
+  }
+  return descendants;
+}
+
 export function CoberturaLiderTab({
   campaignId,
   initialPuestos,
@@ -243,10 +277,13 @@ export function CoberturaLiderTab({
     filters.id_comuna,
   ]);
 
+  // Votantes elegibles para el conteo.
+  // El alcance territorial (departamento/municipio de la campaña) NO excluye
+  // votantes aquí: todo votante asignado a la campaña (id_campana) ya está
+  // dentro de su alcance, tenga o no id_departamento/id_municipio propios.
+  // El alcance solo condiciona las opciones disponibles en los filtros de la UI.
   const eligible = useMemo(() => {
     return allVoters.filter((v) => {
-      if (scopeDept && v.id_departamento !== scopeDept) return false;
-      if (scopeMun && v.id_municipio !== scopeMun) return false;
       if (filters.id_departamento && v.id_departamento !== filters.id_departamento)
         return false;
       if (filters.id_municipio && v.id_municipio !== filters.id_municipio)
@@ -268,7 +305,9 @@ export function CoberturaLiderTab({
         return false;
       return true;
     });
-  }, [allVoters, filters, barrios, scopeDept, scopeMun]);
+  }, [allVoters, filters, barrios]);
+
+  const eligibleIds = useMemo(() => new Set(eligible.map((v) => v.id)), [eligible]);
 
   const leaders = useMemo(() => {
     return allVoters.filter((v) => {
@@ -277,6 +316,7 @@ export function CoberturaLiderTab({
     });
   }, [allVoters]);
 
+  // Build ranking with recursive hierarchy (like SQL recursive CTE)
   const ranking = useMemo(() => {
     const searchLower = searchInput.trim().toLowerCase();
     return leaders
@@ -286,12 +326,16 @@ export function CoberturaLiderTab({
         return fullName.includes(searchLower) || leader.documento.toLowerCase().includes(searchLower);
       })
       .map((leader) => {
-        const referidosDelLider = eligible.filter(
-          (v) => v.id_lider_directo === leader.id
-        );
-        const porPuesto = new Map<number, number>();
+        const descendantIds = buildHierarchy(allVoters, leader.id, eligibleIds);
+        descendantIds.add(leader.id);
 
-        for (const referido of referidosDelLider) {
+        const referidosAll = eligible.filter((v) => descendantIds.has(v.id) && v.id !== leader.id);
+        const referidosDirectos = referidosAll.filter((v) => v.id_lider_directo === leader.id);
+        const referidosIndirectos = referidosAll.length - referidosDirectos.length;
+
+        // Count by voting station from ALL descendants
+        const porPuesto = new Map<number, number>();
+        for (const referido of referidosAll) {
           if (referido.id_puesto_votacion == null) continue;
           porPuesto.set(
             referido.id_puesto_votacion,
@@ -312,9 +356,12 @@ export function CoberturaLiderTab({
 
         return {
           leader,
-          referidos: referidosDelLider.length,
+          referidos: referidosAll.length,
+          referidosDirectos: referidosDirectos.length,
+          referidosIndirectos,
           puestoFuerte: topPuestos[0] ?? null,
           otrosPuestos: topPuestos.slice(1),
+          descendantIds,
         };
       })
       .sort((a, b) => {
@@ -323,7 +370,7 @@ export function CoberturaLiderTab({
         const nb = `${b.leader.nombres} ${b.leader.apellidos}`;
         return na.localeCompare(nb, "es");
       });
-  }, [leaders, eligible, puestoNombre, searchInput]);
+  }, [leaders, allVoters, eligible, eligibleIds, puestoNombre, searchInput]);
 
   const totalReferidos = useMemo(
     () => ranking.reduce((acc, r) => acc + r.referidos, 0),
@@ -335,10 +382,11 @@ export function CoberturaLiderTab({
     [ranking, selectedLeaderId]
   );
 
+  // Show ALL descendants in modal, not just direct referidos
   const selectedReferidos = useMemo(
     () =>
       selectedEntry
-        ? eligible.filter((v) => v.id_lider_directo === selectedEntry.leader.id)
+        ? eligible.filter((v) => selectedEntry.descendantIds.has(v.id) && v.id !== selectedEntry.leader.id)
         : [],
     [selectedEntry, eligible]
   );
@@ -393,6 +441,8 @@ export function CoberturaLiderTab({
             .join("; ")
         : "—",
       Referidos: row.referidos,
+      "Directos": row.referidosDirectos,
+      "Indirectos": row.referidosIndirectos,
     }));
     const ws = XLSX.utils.json_to_sheet(filas);
     const wb = XLSX.utils.book_new();
@@ -709,6 +759,10 @@ export function CoberturaLiderTab({
                     ? puestoNombre.get(selectedEntry.leader.id_puesto_votacion) ??
                       "—"
                     : "—"}
+                </p>
+                <p className="mt-1 text-xs text-neutral-400">
+                  {selectedEntry.referidosDirectos.toLocaleString("es-CO")} directos ·{" "}
+                  {selectedEntry.referidosIndirectos.toLocaleString("es-CO")} indirectos
                 </p>
               </div>
               <button
