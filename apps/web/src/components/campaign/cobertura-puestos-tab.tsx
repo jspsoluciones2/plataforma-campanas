@@ -43,6 +43,7 @@ type Filters = {
   id_lider_directo: number;
 };
 type Row = {
+  posicion: number;
   puesto: PuestoOption;
   mujeresReferenciadas: number;
   hombresReferenciados: number;
@@ -205,14 +206,12 @@ export function CoberturaPuestosTab({ campaignId, initialAlcance }: Props) {
       ? new Set(barrios.filter((b) => b.id_comuna === filters.id_comuna).map((b) => b.id))
       : null;
     const eligible = voters.filter((v) => {
-      if (scopeDept && v.id_departamento !== scopeDept) return false;
-      if (scopeMun && v.id_municipio !== scopeMun) return false;
       if (filters.id_departamento && v.id_departamento !== filters.id_departamento) return false;
       if (filters.id_municipio && v.id_municipio !== filters.id_municipio) return false;
       if (barrioIds && (v.id_barrio_votante == null || !barrioIds.has(v.id_barrio_votante))) return false;
       if (filters.id_barrio && v.id_barrio_votante !== filters.id_barrio) return false;
       if (filters.id_lider_directo && v.id_lider_directo !== filters.id_lider_directo) return false;
-      return v.id_lider_directo != null && v.id_puesto_votacion != null;
+      return v.id_puesto_votacion != null;
     });
     const counts = new Map<number, { mujeres: number; hombres: number; total: number }>();
     for (const voter of eligible) {
@@ -247,8 +246,9 @@ export function CoberturaPuestosTab({ campaignId, initialAlcance }: Props) {
         }
         if (b.totalReferenciado !== a.totalReferenciado) return b.totalReferenciado - a.totalReferenciado;
         return a.puesto.nombre.localeCompare(b.puesto.nombre, "es");
-      });
-  }, [barrios, filters, puestos, scopeDept, scopeMun, voters, searchInput]);
+      })
+      .map((row, index) => ({ ...row, posicion: index + 1 }));
+  }, [barrios, filters, puestos, voters, searchInput]);
 
   const hasActiveFilters = Boolean(
     filters.id_departamento || filters.id_municipio || filters.id_comuna || filters.id_barrio || filters.id_lider_directo
@@ -272,6 +272,7 @@ export function CoberturaPuestosTab({ campaignId, initialAlcance }: Props) {
 
   function descargarExcel() {
     const data = rows.map((row) => ({
+      Posición: row.posicion,
       Puesto: row.puesto.nombre,
       "Restricción mujeres": row.puesto.votantes_mujeres_admite ?? 0,
       "Mujeres referenciadas": row.mujeresReferenciadas,
@@ -342,15 +343,16 @@ export function CoberturaPuestosTab({ campaignId, initialAlcance }: Props) {
         <div className="overflow-x-auto">
           <table className="w-full min-w-[90rem] text-sm">
             <thead><tr className="border-b border-neutral-100 bg-neutral-50/80 text-left">
-              {["Puesto", "Restricción mujeres", "Mujeres referenciadas", "% cobertura mujeres", "Restricción hombres", "Hombres referenciados", "% cobertura hombres", "Total restricción", "Total referenciado", "Cobertura total %"].map((heading) => <th key={heading} className="whitespace-nowrap px-4 py-3 text-xs font-semibold tracking-wide text-neutral-600">{heading}</th>)}
+              {["Posición", "Puesto", "Restricción mujeres", "Mujeres referenciadas", "% cobertura mujeres", "Restricción hombres", "Hombres referenciados", "% cobertura hombres", "Total restricción", "Total referenciado", "Cobertura total %"].map((heading) => <th key={heading} className="whitespace-nowrap px-4 py-3 text-xs font-semibold tracking-wide text-neutral-600">{heading}</th>)}
             </tr></thead>
             <tbody className="divide-y divide-neutral-100">
               {rows.length ? rows.map((row) => { const totalRestriction = (row.puesto.votantes_mujeres_admite ?? 0) + (row.puesto.votantes_hombres_admite ?? 0); return <tr key={row.puesto.id} className="bg-white transition-colors hover:bg-neutral-50/50">
+                <td className="px-4 py-3 font-semibold text-neutral-500">{row.posicion}</td>
                 <td className="whitespace-nowrap px-4 py-3 font-medium text-neutral-900">{row.puesto.nombre}</td>
                 <td className="px-4 py-3 text-neutral-700">{row.puesto.votantes_mujeres_admite ?? 0}</td><td className="px-4 py-3 text-neutral-700">{row.mujeresReferenciadas}</td><td className="px-4 py-3 text-neutral-700">{percentageLabel(row.coberturaMujeres)}</td>
                 <td className="px-4 py-3 text-neutral-700">{row.puesto.votantes_hombres_admite ?? 0}</td><td className="px-4 py-3 text-neutral-700">{row.hombresReferenciados}</td><td className="px-4 py-3 text-neutral-700">{percentageLabel(row.coberturaHombres)}</td>
                 <td className="px-4 py-3 text-neutral-700">{totalRestriction}</td><td className="px-4 py-3 font-semibold text-neutral-900">{row.totalReferenciado}</td><td className="px-4 py-3 font-semibold text-neutral-900">{percentageLabel(row.coberturaTotal)}</td>
-              </tr>; }) : <tr><td colSpan={10} className="px-4 py-12 text-center text-neutral-500">No hay puestos en el alcance de la campaña.</td></tr>}
+              </tr>; }) : <tr><td colSpan={11} className="px-4 py-12 text-center text-neutral-500">No hay puestos en el alcance de la campaña.</td></tr>}
             </tbody>
           </table>
         </div>
