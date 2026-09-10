@@ -18,7 +18,10 @@ import {
   parseCatalogWorkbook,
   buildErrorWorkbook,
 } from "@/lib/campaign/catalog-bulk-xlsx";
-import { userCanEditCampaign } from "@/lib/campaign/access";
+import {
+  userCanEditCampaign,
+  userCanManageCampaignTeam,
+} from "@/lib/campaign/access";
 import { insertPuestoRow, updatePuestoRow } from "@/lib/campaign/puestos";
 import { validarComunaBarrioPuesto } from "@/lib/campaign/comuna-barrio";
 import { validarNivelJerarquia } from "@/lib/campaign/roles";
@@ -289,6 +292,45 @@ export async function updateVotantesEstadoBulkAction(
 
   revalidateCampaign(campaignId);
   return { ok: true, count: ids.length };
+}
+
+export async function deleteVotanteAction(
+  campaignId: number,
+  votanteId: number
+) {
+  const { supabase, user } = await requireCampaignAccess(campaignId);
+
+  const puedeAdministrar = await userCanManageCampaignTeam(user.id, campaignId);
+  if (!puedeAdministrar) {
+    return {
+      error:
+        "No tienes permiso para eliminar votantes. Se requiere rol administrador de campaña.",
+    };
+  }
+
+  const { data: votante } = await supabase
+    .from("votantes")
+    .select("id")
+    .eq("id", votanteId)
+    .eq("id_campana", campaignId)
+    .maybeSingle();
+
+  if (!votante) {
+    return { error: "Votante no encontrado en esta campaña." };
+  }
+
+  const { error } = await supabase
+    .from("votantes")
+    .delete()
+    .eq("id", votanteId)
+    .eq("id_campana", campaignId);
+
+  if (error) {
+    return { error: "No se pudo eliminar el votante: " + error.message };
+  }
+
+  revalidateCampaign(campaignId);
+  return { ok: true };
 }
 
 export async function updateVotanteNovedadAction(

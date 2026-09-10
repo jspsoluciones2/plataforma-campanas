@@ -2,7 +2,7 @@
 
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { Pencil } from "lucide-react";
+import { Eye, Pencil, Trash2 } from "lucide-react";
 import {
   updateVotanteEstadoAction,
   updateVotanteNovedadAction,
@@ -242,6 +242,8 @@ type Props = {
   departamentos?: Departamento[];
   municipios?: Municipio[];
   barrios?: BarrioConComuna[];
+  onViewVotante?: (v: VotanteListRow) => void;
+  onDeleteVotante?: (v: VotanteListRow) => void;
 };
 
 function EstadoEditorCell({
@@ -328,6 +330,8 @@ export function VotantesTable({
   departamentos = [],
   municipios = [],
   barrios = [],
+  onViewVotante,
+  onDeleteVotante,
 }: Props) {
   const selectable = Boolean(onToggleRow && onToggleAllPage);
   const mostrarNovedades = !hideNovedades;
@@ -520,15 +524,40 @@ export function VotantesTable({
                     {new Date(v.creado_en).toLocaleDateString("es-CO")}
                   </td>
                   <td className="px-3 py-2 text-center">
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="icon-xs"
-                      onClick={() => setEditingVotante(rowToVotanteRow(v))}
-                      title="Editar votante"
-                    >
-                      <Pencil className="size-3.5" />
-                    </Button>
+                    <div className="flex items-center justify-center gap-1">
+                      {onViewVotante ? (
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon-xs"
+                          onClick={() => onViewVotante(v)}
+                          title="Ver votante"
+                        >
+                          <Eye className="size-3.5" />
+                        </Button>
+                      ) : null}
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon-xs"
+                        onClick={() => setEditingVotante(rowToVotanteRow(v))}
+                        title="Editar votante"
+                      >
+                        <Pencil className="size-3.5" />
+                      </Button>
+                      {onDeleteVotante ? (
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon-xs"
+                          onClick={() => onDeleteVotante(v)}
+                          title="Eliminar votante"
+                          className="hover:text-red-600"
+                        >
+                          <Trash2 className="size-3.5" />
+                        </Button>
+                      ) : null}
+                    </div>
                   </td>
                 </tr>
               ))

@@ -4,12 +4,17 @@ import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from
 import { createClient } from "@/lib/supabase/client";
 import { Plus, UserPlus, Users, X, Download, CheckSquare } from "lucide-react";
 import * as XLSX from "xlsx";
-import { updateVotantesEstadoBulkAction } from "@/app/(campaign)/campaign/[id]/actions";
+import {
+  deleteVotanteAction,
+  updateVotantesEstadoBulkAction,
+} from "@/app/(campaign)/campaign/[id]/actions";
 import { VotanteRegisterForm } from "@/components/campaign/votante-register-form";
 import {
+  ETIQUETAS_ESTADO,
   VotantesTable,
   type VotanteListRow,
 } from "@/components/campaign/votantes-table";
+import { VotanteViewModal } from "@/components/campaign/votante-view-modal";
 import {
   Card,
   PageHeader,
@@ -61,6 +66,11 @@ type Props = {
   barrios: BarrioConComuna[];
   comunas: Comuna[];
   alcance?: AlcanceValue;
+  fixedEstado?: string;
+  hideCrearTab?: boolean;
+  enableReview?: boolean;
+  pageTitle?: string;
+  pageDescription?: string;
 };
 
 type TabId = "listado" | "crear";
@@ -117,9 +127,14 @@ export function VotantesPanel({
   barrios,
   comunas,
   alcance,
+  fixedEstado,
+  hideCrearTab = false,
+  enableReview = false,
+  pageTitle,
+  pageDescription,
 }: Props) {
   const [activeTab, setActiveTab] = useState<TabId>(
-    votantes.length === 0 ? "crear" : "listado"
+    votantes.length === 0 && !hideCrearTab ? "crear" : "listado"
   );
   const [rows, setRows] = useState<VotanteListRow[]>(votantes);
   const [filters, setFilters] = useState<Filters>(DEFAULT_FILTERS);
@@ -131,6 +146,10 @@ export function VotantesPanel({
   const [bulkEstado, setBulkEstado] = useState("");
   const [bulkFeedback, setBulkFeedback] = useState<string | null>(null);
   const [pendingBulk, startBulk] = useTransition();
+  const [viewingVotante, setViewingVotante] = useState<VotanteListRow | null>(
+    null
+  );
+  const [deleteFeedback, setDeleteFeedback] = useState<string | null>(null);
   const supabase = useRef(createClient());
   const debouncedRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -182,9 +201,10 @@ export function VotantesPanel({
       q = q.in("id_barrio_votante", ids);
     }
     if (filters.id_rol) q = q.eq("id_rol", filters.id_rol);
-    if (filters.estado) q = q.eq("estado", filters.estado);
+    if (fixedEstado) q = q.eq("estado", fixedEstado);
+    else if (filters.estado) q = q.eq("estado", filters.estado);
     return q;
-  }, [filters, barrios]);
+  }, [filters, barrios, fixedEstado]);
 
   const fetchListado = useCallback(async () => {
     setLoading(true);
@@ -324,6 +344,26 @@ export function VotantesPanel({
     return Array.isArray(rel) ? (rel[0] ?? null) : rel;
   }
 
+  async function eliminarVotante(v: VotanteListRow) {
+    setDeleteFeedback(null);
+    const ok = window.confirm(
+      `¿Eliminar a ${v.nombres} ${v.apellidos} (${v.tipo_documento} ${v.documento})? Esta acción no se puede deshacer.`
+    );
+    if (!ok) return;
+    const result = await deleteVotanteAction(campaignId, v.id);
+    if (result?.error) {
+      setDeleteFeedback(result.error);
+      return;
+    }
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      next.delete(v.id);
+      return next;
+    });
+    setDeleteFeedback(null);
+    fetchListado();
+  }
+
   async function descargarExcel() {
     if (selectedIds.size === 0) return;
     const ids = Array.from(selectedIds);
@@ -359,21 +399,27 @@ export function VotantesPanel({
   return (
     <>
       <PageHeader
-        title="Votantes"
-        description="Registro manual de votantes. Las novedades las completa el equipo al detectar irregularidades."
+        title={pageTitle ?? "Votantes"}
+        description={
+          pageDescription ??
+          "Registro manual de votantes. Las novedades las completa el equipo al detectar irregularidades."
+        }
       >
-        <button
-          type="button"
-          onClick={() => setActiveTab("crear")}
-          className={cn(platformButtonClass, "gap-2")}
-        >
-          <Plus className="size-4 shrink-0" aria-hidden />
-          Nuevo votante
-        </button>
+        {!hideCrearTab ? (
+          <button
+            type="button"
+            onClick={() => setActiveTab("crear")}
+            className={cn(platformButtonClass, "gap-2")}
+          >
+            <Plus className="size-4 shrink-0" aria-hidden />
+            Nuevo votante
+          </button>
+        ) : null}
       </PageHeader>
 
       <div className="flex flex-wrap gap-1 rounded-xl border border-neutral-200 bg-neutral-50/50 p-1.5">
-        {TABS.map((tab) => {
+        {TABS.filter((tab) => tab.id !== "crear" || !hideCrearTab).map(
+          (tab) => {
           const Icon = tab.icon;
           const active = activeTab === tab.id;
           return (
@@ -525,22 +571,30 @@ export function VotantesPanel({
                   ))}
                 </select>
               </div>
-              <div className="w-[160px]">
-                <label className="mb-1 block text-xs font-medium text-neutral-500">
-                  Estado
-                </label>
-                <select
-                  value={filters.estado}
-                  onChange={(e) => changeFilter("estado", e.target.value)}
-                  className={platformSelectClass}
-                >
-                  {ESTADOS.map((s) => (
-                    <option key={s.value} value={s.value}>
-                      {s.label}
-                    </option>
-                  ))}
-                </select>
-              </div>
+              {fixedEstado ? (
+                <div className="flex items-end pb-1">
+                  <span className="inline-flex items-center gap-1.5 rounded-lg bg-amber-50 px-3 py-2 text-xs font-medium text-amber-800">
+                    Estado: {ETIQUETAS_ESTADO[fixedEstado] ?? fixedEstado}
+                  </span>
+                </div>
+              ) : (
+                <div className="w-[160px]">
+                  <label className="mb-1 block text-xs font-medium text-neutral-500">
+                    Estado
+                  </label>
+                  <select
+                    value={filters.estado}
+                    onChange={(e) => changeFilter("estado", e.target.value)}
+                    className={platformSelectClass}
+                  >
+                    {ESTADOS.map((s) => (
+                      <option key={s.value} value={s.value}>
+                        {s.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
               {hasActiveFilters && (
                 <div className="flex items-end pb-0.5">
                   <Button
@@ -647,7 +701,30 @@ export function VotantesPanel({
             departamentos={departamentos}
             municipios={municipios}
             barrios={barrios}
+            onViewVotante={enableReview ? (v) => setViewingVotante(v) : undefined}
+            onDeleteVotante={enableReview ? (v) => eliminarVotante(v) : undefined}
           />
+
+          {deleteFeedback ? (
+            <p className="mt-2 text-xs text-red-700">{deleteFeedback}</p>
+          ) : null}
+
+          {viewingVotante ? (
+            <VotanteViewModal
+              key={viewingVotante.id}
+              votante={viewingVotante}
+              tiposNovedad={tiposNovedad}
+              roles={roles}
+              puestos={puestos}
+              lugaresTrabajo={lugaresTrabajo}
+              lideres={lideres}
+              departamentos={departamentos}
+              municipios={municipios}
+              barrios={barrios}
+              open={!!viewingVotante}
+              onClose={() => setViewingVotante(null)}
+            />
+          ) : null}
 
           <div className="mt-3 flex items-center justify-between gap-3">
             <p className="text-xs text-neutral-500">

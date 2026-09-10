@@ -1,42 +1,44 @@
 import { requireCampaignAccess } from "@/lib/campaign/access";
-import { QuarantineResolveButtons } from "@/components/campaign/quarantine-resolve-buttons";
+import { VotantesPanel } from "@/components/campaign/votantes-panel";
 import {
-  Card,
-  DataTable,
-  EmptyState,
-  PageHeader,
-  StatusBadge,
-} from "@/components/platform/platform-ui";
+  fetchDepartamentos,
+  fetchMunicipios,
+  fetchPuestosPorAlcance,
+} from "@/lib/campaign/comunas";
+import type { AlcanceValue } from "@/components/campaign/mapa-geografico";
+import type { SupabaseClient } from "@supabase/supabase-js";
 
-const ETIQUETAS_COINCIDENCIA: Record<string, string> = {
-  cedula_exacta: "Cédula exacta",
-  telefono_similitud_nombre: "Teléfono + nombre similar",
-};
-
-const ETIQUETAS_ESTADO: Record<string, string> = {
-  pendiente: "Pendiente",
-  resuelto: "Resuelto",
-  descartado: "Descartado",
-  escalado: "Escalado",
-};
-
-type CuarentenaRow = {
+type BarrioConComuna = {
   id: number;
-  nombres: string;
-  apellidos: string;
-  documento: string;
-  tipo_documento: string;
-  telefono: string | null;
-  tipo_coincidencia: string;
-  similitud_nombre: number | null;
-  estado: string;
-  canal_origen: string;
-  creado_en: string;
-  votante_conflicto:
-    | { nombres: string; apellidos: string; documento: string; tipo_documento: string }
-    | { nombres: string; apellidos: string; documento: string; tipo_documento: string }[]
-    | null;
+  nombre: string;
+  id_comuna: number;
+  id_municipio: string;
 };
+
+const ESTADO_CUARENTENA = "en_cuarentena";
+
+async function fetchBarriosConMunicipio(
+  supabase: SupabaseClient
+): Promise<BarrioConComuna[]> {
+  const { data } = await supabase
+    .from("barrios")
+    .select("id, nombre, id_comuna, comunas!inner(id_municipio)")
+    .order("nombre");
+
+  if (!data) return [];
+
+  return data
+    .map((b) => {
+      const comunaRel = Array.isArray(b.comunas) ? b.comunas[0] : b.comunas;
+      return {
+        id: b.id,
+        nombre: b.nombre,
+        id_comuna: b.id_comuna,
+        id_municipio: String(comunaRel?.id_municipio ?? ""),
+      };
+    })
+    .filter((b) => b.id_municipio);
+}
 
 export default async function QuarantinePage({
   params,
@@ -47,165 +49,132 @@ export default async function QuarantinePage({
   const campaignId = Number(id);
   const { supabase } = await requireCampaignAccess(campaignId);
 
-  const { data: rows } = await supabase
-    .from("cuarentena_votantes")
-    .select(
-      `
-      id,
-      nombres,
-      apellidos,
-      documento,
-      tipo_documento,
-      telefono,
-      tipo_coincidencia,
-      similitud_nombre,
-      estado,
-      canal_origen,
-      creado_en,
-      votante_conflicto:votantes!cuarentena_votantes_id_votante_conflicto_fkey (
-        nombres,
-        apellidos,
-        documento,
-        tipo_documento
+  const [
+    { data: votantes },
+    { data: roles },
+    puestos,
+    { data: lugaresTrabajo },
+    { data: lideres },
+    { data: tiposNovedad },
+    departamentos,
+    municipios,
+    barrios,
+    { data: comunas },
+    { data: territorio },
+  ] = await Promise.all([
+    supabase
+      .from("votantes")
+      .select(
+        `id, nombres, apellidos, documento, tipo_documento, sexo, telefono,
+         fecha_nacimiento, direccion, estado, creado_en,
+         id_tipo_novedad, detalle_novedad,
+         roles(nombre), lugares_trabajo(nombre),
+         puestos_votacion(nombre, municipio),
+         lider_directo:votantes(nombres, apellidos)`
       )
-    `
-    )
-    .eq("id_campana", campaignId)
-    .order("creado_en", { ascending: false })
-    .limit(100);
+      .eq("id_campana", campaignId)
+      .eq("estado", ESTADO_CUARENTENA)
+      .order("creado_en", { ascending: false })
+      .limit(100),
+    supabase
+      .from("roles")
+      .select("id, nombre, nivel_jerarquia")
+      .eq("id_campana", campaignId)
+      .order("nivel_jerarquia"),
+    fetchPuestosPorAlcance(supabase, campaignId),
+    supabase
+      .from("lugares_trabajo")
+      .select("id, nombre")
+      .eq("id_campana", campaignId)
+      .order("nombre"),
+    supabase
+      .from("votantes")
+      .select("id, nombres, apellidos, documento, id_rol, roles(nivel_jerarquia)")
+      .eq("id_campana", campaignId)
+      .in("estado", ["activo", "pendiente_verificacion"])
+      .order("apellidos")
+      .limit(200),
+    supabase
+      .from("tipos_novedad")
+      .select("id, novedad")
+      .eq("id_campana", campaignId)
+      .order("novedad"),
+    fetchDepartamentos(supabase),
+    fetchMunicipios(supabase),
+    fetchBarriosConMunicipio(supabase),
+    supabase.from("comunas").select("id, nombre, id_municipio").order("nombre"),
+    supabase
+      .from("campana_territorio")
+      .select("id_departamento, id_municipio")
+      .eq("id_campana", campaignId)
+      .maybeSingle(),
+  ]);
 
-  const pendientes = (rows ?? []).filter(
-    (r) => r.estado === "pendiente" || r.estado === "escalado"
-  );
-  const historial = (rows ?? []).filter(
-    (r) => r.estado !== "pendiente" && r.estado !== "escalado"
-  );
+  const rows = votantes ?? [];
 
-  function conflictoLabel(row: CuarentenaRow) {
-    const v = Array.isArray(row.votante_conflicto)
-      ? row.votante_conflicto[0]
-      : row.votante_conflicto;
-    if (!v) return "—";
-    return `${v.apellidos} ${v.nombres} (${v.tipo_documento} ${v.documento})`;
+  // Determinar ámbito territorial para preseleccionar residencia
+  let alcance: AlcanceValue | undefined;
+  if (territorio) {
+    if (territorio.id_departamento && !territorio.id_municipio) {
+      const { data: depto } = await supabase
+        .from("departamentos")
+        .select("nombre")
+        .eq("id", territorio.id_departamento)
+        .single();
+      alcance = {
+        tipo: "departamental",
+        id_departamento: territorio.id_departamento,
+        nombre_departamento: depto?.nombre ?? undefined,
+      };
+    } else if (territorio.id_municipio) {
+      const { data: mun } = await supabase
+        .from("municipios")
+        .select("nombre, id_departamento")
+        .eq("id", territorio.id_municipio)
+        .single();
+      alcance = {
+        tipo: "municipal",
+        id_municipio: territorio.id_municipio,
+        nombre_municipio: mun?.nombre ?? undefined,
+        id_departamento: mun?.id_departamento ?? undefined,
+      };
+    }
   }
 
+  const lideresConJerarquia = (lideres ?? []).map((l) => {
+    const rel = l.roles as
+      | { nivel_jerarquia: number | null }
+      | { nivel_jerarquia: number | null }[]
+      | null;
+    const rol = Array.isArray(rel) ? rel[0] : rel;
+    return {
+      id: l.id,
+      nombres: l.nombres,
+      apellidos: l.apellidos,
+      documento: l.documento,
+      nivel_jerarquia: rol?.nivel_jerarquia ?? null,
+    };
+  });
+
   return (
-    <>
-      <PageHeader
-        title="Cuarentena"
-        description="Duplicados y conflictos detectados entre recolectores de esta campaña."
-      />
-
-      <Card
-        title="Pendientes de resolución"
-        description={`${pendientes.length} registro(s) requieren acción de supervisor.`}
-      >
-        {pendientes.length === 0 ? (
-          <EmptyState
-            title="Sin conflictos pendientes"
-            description="Los duplicados detectados al registrar votantes aparecerán aquí."
-          />
-        ) : (
-          <DataTable
-            data={pendientes as CuarentenaRow[]}
-            rowKey={(r) => String(r.id)}
-            emptyMessage="Sin registros."
-            columns={[
-              {
-                key: "propuesto",
-                header: "Registro propuesto",
-                cell: (r) => (
-                  <span className="font-medium text-neutral-900">
-                    {r.apellidos} {r.nombres}
-                    <span className="mt-0.5 block text-xs font-normal text-neutral-500">
-                      {r.tipo_documento} {r.documento}
-                      {r.telefono ? ` · ${r.telefono}` : ""}
-                    </span>
-                  </span>
-                ),
-              },
-              {
-                key: "conflicto",
-                header: "Conflicto con",
-                cell: (r) => conflictoLabel(r),
-              },
-              {
-                key: "tipo",
-                header: "Coincidencia",
-                cell: (r) => (
-                  <span>
-                    {ETIQUETAS_COINCIDENCIA[r.tipo_coincidencia] ??
-                      r.tipo_coincidencia}
-                    {r.similitud_nombre != null ? (
-                      <span className="block text-xs text-neutral-500">
-                        Similitud {(r.similitud_nombre * 100).toFixed(0)}%
-                      </span>
-                    ) : null}
-                  </span>
-                ),
-              },
-              {
-                key: "estado",
-                header: "Estado",
-                cell: (r) => (
-                  <StatusBadge variant="default">
-                    {ETIQUETAS_ESTADO[r.estado] ?? r.estado}
-                  </StatusBadge>
-                ),
-              },
-              {
-                key: "acciones",
-                header: "Acciones",
-                cell: (r) => (
-                  <QuarantineResolveButtons
-                    campaignId={campaignId}
-                    quarantineId={r.id}
-                  />
-                ),
-              },
-            ]}
-          />
-        )}
-      </Card>
-
-      {historial.length > 0 ? (
-        <Card title="Historial resuelto" description={`${historial.length} registro(s)`}>
-          <DataTable
-            data={historial as CuarentenaRow[]}
-            rowKey={(r) => String(r.id)}
-            emptyMessage="Sin historial."
-            columns={[
-              {
-                key: "propuesto",
-                header: "Registro propuesto",
-                cell: (r) => `${r.apellidos} ${r.nombres}`,
-              },
-              {
-                key: "tipo",
-                header: "Coincidencia",
-                cell: (r) =>
-                  ETIQUETAS_COINCIDENCIA[r.tipo_coincidencia] ??
-                  r.tipo_coincidencia,
-              },
-              {
-                key: "estado",
-                header: "Resolución",
-                cell: (r) => (
-                  <StatusBadge variant="default">
-                    {ETIQUETAS_ESTADO[r.estado] ?? r.estado}
-                  </StatusBadge>
-                ),
-              },
-              {
-                key: "fecha",
-                header: "Fecha",
-                cell: (r) => new Date(r.creado_en).toLocaleDateString("es-CO"),
-                className: "text-neutral-500",
-              },
-            ]}
-          />
-        </Card>
-      ) : null}
-    </>
+    <VotantesPanel
+      campaignId={campaignId}
+      votantes={rows}
+      tiposNovedad={tiposNovedad ?? []}
+      roles={roles ?? []}
+      puestos={puestos ?? []}
+      lugaresTrabajo={lugaresTrabajo ?? []}
+      lideres={lideresConJerarquia}
+      departamentos={departamentos}
+      municipios={municipios}
+      barrios={barrios}
+      comunas={comunas ?? []}
+      alcance={alcance}
+      fixedEstado={ESTADO_CUARENTENA}
+      hideCrearTab
+      enableReview
+      pageTitle="Cuarentena"
+      pageDescription="Votantes en estado de cuarentena. Revisa manualmente los registros, edita los datos correctos, elimina los duplicados o cambia su estado en lote."
+    />
   );
 }
