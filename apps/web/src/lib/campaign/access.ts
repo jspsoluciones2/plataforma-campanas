@@ -44,6 +44,18 @@ export async function requireCampaignAccess(campaignId: number) {
   return { supabase, user, campana: basica };
 }
 
+export async function userIsPlatformMember(userId: string): Promise<boolean> {
+  const supabase = await createClient();
+
+  const { data: platform } = await supabase
+    .from("miembros_plataforma")
+    .select("rol")
+    .eq("id_usuario", userId)
+    .maybeSingle();
+
+  return Boolean(platform);
+}
+
 export async function userCanAccessCampaign(
   userId: string,
   campaignId: number

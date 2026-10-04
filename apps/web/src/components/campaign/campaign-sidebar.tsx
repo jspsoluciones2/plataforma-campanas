@@ -35,6 +35,7 @@ type CampaignSidebarProps = {
   logoUrl: string | null;
   logoAlt: string;
   canManageTeam: boolean;
+  esMiembroPlataforma: boolean;
 };
 
 type CampaignNavItem = {
@@ -59,6 +60,7 @@ export function CampaignSidebar({
   logoUrl,
   logoAlt,
   canManageTeam,
+  esMiembroPlataforma,
 }: CampaignSidebarProps) {
   const pathname = usePathname();
   const catalogDefaultHref = catalogSegmentPath(
@@ -206,13 +208,15 @@ export function CampaignSidebar({
 
       <div className="shrink-0 border-t border-white/10 p-4 pb-10">
         <div className="space-y-3">
-          <Link
-            href="/platform"
-            className="flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium text-neutral-300 transition-colors hover:bg-white/10 hover:text-white"
-          >
-            <ArrowLeftFromLine className="size-4 shrink-0 opacity-80" />
-            Administración
-          </Link>
+          {esMiembroPlataforma && (
+            <Link
+              href="/platform"
+              className="flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium text-neutral-300 transition-colors hover:bg-white/10 hover:text-white"
+            >
+              <ArrowLeftFromLine className="size-4 shrink-0 opacity-80" />
+              Administración
+            </Link>
+          )}
           <p
             className="break-all text-xs leading-relaxed text-neutral-400"
             title={userEmail}

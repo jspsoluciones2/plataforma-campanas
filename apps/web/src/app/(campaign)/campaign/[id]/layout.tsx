@@ -2,7 +2,7 @@ import "@/app/(platform)/platform/platform-theme.css";
 import { isSupabaseConfigured } from "@/lib/supabase/config";
 import { loadPlatformBrand } from "@/lib/platform/load-platform-brand";
 import { platformBrandToStyle } from "@/lib/platform/brand";
-import { requireCampaignAccess, userCanManageCampaignTeam } from "@/lib/campaign/access";
+import { requireCampaignAccess, userCanManageCampaignTeam, userIsPlatformMember } from "@/lib/campaign/access";
 import { formatAuthLoginDisplay } from "@/lib/auth/identity";
 import { CampaignSidebar } from "@/components/campaign/campaign-sidebar";
 
@@ -28,6 +28,7 @@ export default async function CampaignLayout({
 
   const platformBrand = await loadPlatformBrand();
   const canManageTeam = await userCanManageCampaignTeam(user.id, campaignId);
+  const esMiembroPlataforma = await userIsPlatformMember(user.id);
 
   return (
     <div
@@ -46,6 +47,7 @@ export default async function CampaignLayout({
         logoUrl={platformBrand.logoUrl}
         logoAlt={platformBrand.textoAltLogo}
         canManageTeam={canManageTeam}
+        esMiembroPlataforma={esMiembroPlataforma}
       />
       <div className="platform-main flex min-h-0 min-w-0 flex-1 flex-col">
         <main className="min-h-0 flex-1 overflow-y-auto p-6 md:p-8">

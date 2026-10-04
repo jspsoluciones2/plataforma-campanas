@@ -6,6 +6,10 @@ import {
   submitCampaignStatusUpdate,
   type EstadoCampana,
 } from "../../actions";
+import {
+  cambiarRolMiembroAction,
+  eliminarMiembroAction,
+} from "../../../../(campaign)/campaign/[id]/equipo/actions";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -182,7 +186,12 @@ export default async function CampaignDetailPage({
         />
 
         <ul className="mt-6 space-y-2">
-          <CampaignTeamMemberList members={miembros} />
+          <CampaignTeamMemberList
+            members={miembros}
+            campaignId={id}
+            onChangeRole={cambiarRolMiembroAction}
+            onRemoveMember={eliminarMiembroAction}
+          />
         </ul>
       </Card>
     </>

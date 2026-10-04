@@ -3,7 +3,11 @@ import { CampaignTeamMemberList } from "@/components/campaign/campaign-team-memb
 import { Card, PageHeader } from "@/components/platform/platform-ui";
 import { requireCampaignTeamManager } from "@/lib/campaign/access";
 import { listCampaignMembersWithProfiles } from "@/lib/campaign/team";
-import { assignCampaignTeamMemberAction } from "./actions";
+import {
+  assignCampaignTeamMemberAction,
+  cambiarRolMiembroAction,
+  eliminarMiembroAction,
+} from "./actions";
 
 export default async function CampaignTeamPage({
   params,
@@ -31,7 +35,12 @@ export default async function CampaignTeamPage({
 
       <Card title="Integrantes asignados">
         <ul className="space-y-2">
-          <CampaignTeamMemberList members={miembros} />
+          <CampaignTeamMemberList
+            members={miembros}
+            campaignId={id}
+            onChangeRole={cambiarRolMiembroAction}
+            onRemoveMember={eliminarMiembroAction}
+          />
         </ul>
       </Card>
     </>
