@@ -29,7 +29,6 @@ const NAV = [
 ] as const;
 
 const MAESTRAS_MENU = [
-  { href: "/platform/maestras/apis", label: "APIs y canales" },
   { href: "/platform/maestras/campanas", label: "Campañas" },
   { href: "/platform/maestras/clientes", label: "Clientes" },
   { href: "/platform/maestras/departamentos", label: "Departamentos" },
@@ -48,7 +47,6 @@ const MAESTRAS_MENU = [
 
 const MAESTRAS_PATHS = [
   "/platform/maestras",
-  "/platform/maestras/apis",
   "/platform/maestras/campanas",
   "/platform/maestras/proceso-electoral",
   "/platform/maestras/clientes",
