@@ -71,6 +71,7 @@ export default async function CampaignVotantesPage({
          lider_directo:votantes(nombres, apellidos)`
       )
       .eq("id_campana", campaignId)
+      .neq("estado", "en_cuarentena")
       .order("creado_en", { ascending: false })
       .limit(100),
     supabase

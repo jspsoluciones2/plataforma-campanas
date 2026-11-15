@@ -13,6 +13,8 @@ from app.modules.voter_normalize import (
 )
 
 ESTADOS_ACTIVOS = ("activo", "registrado", "pendiente_verificacion")
+ESTADO_CUARENTENA = "en_cuarentena"
+NOVEDAD_DOCUMENTO_REPETIDO = "Documento Repetido"
 UMBRAL_SIMILITUD_NOMBRE = 0.85
 
 _estados_consulta_cache: list[str] | None = None
@@ -33,6 +35,11 @@ def estados_votante_para_consulta(client: Client) -> list[str]:
     return _estados_consulta_cache
 
 
+def estados_para_conflicto_documento(client: Client) -> list[str]:
+    """Estados que cuentan como documento ya existente (incluye cuarentena)."""
+    return [*estados_votante_para_consulta(client), ESTADO_CUARENTENA]
+
+
 def estado_inicial_votante(client: Client) -> str:
     global _estado_insert_cache
     if _estado_insert_cache is not None:
@@ -43,6 +50,37 @@ def estado_inicial_votante(client: Client) -> str:
     except Exception:
         _estado_insert_cache = "pendiente_verificacion"
     return _estado_insert_cache
+
+
+def _tipo_novedad_documento_repetido(
+    client: Client, campaign_id: str
+) -> Any | None:
+    try:
+        existente = (
+            client.table("tipos_novedad")
+            .select("id")
+            .eq("id_campana", campaign_id)
+            .ilike("novedad", NOVEDAD_DOCUMENTO_REPETIDO)
+            .limit(1)
+            .execute()
+        )
+        if existente.data:
+            return existente.data[0]["id"]
+        creado = (
+            client.table("tipos_novedad")
+            .insert(
+                {
+                    "id_campana": campaign_id,
+                    "novedad": NOVEDAD_DOCUMENTO_REPETIDO,
+                }
+            )
+            .execute()
+        )
+        if creado.data:
+            return creado.data[0]["id"]
+    except Exception:
+        pass
+    return None
 
 
 class RegisterVoterInput(TypedDict, total=False):
@@ -70,7 +108,6 @@ class RegisterVoterInput(TypedDict, total=False):
 class RegisterVoterResult(TypedDict, total=False):
     outcome: Literal["created", "quarantined", "validation_error"]
     voter_id: str
-    quarantine_id: str
     match_type: str
     errors: list[str]
 
@@ -114,22 +151,29 @@ def register_voter(
         client, campaign_id, documento, tipo_documento
     )
     if conflicto_cedula:
-        quarantine_id = _crear_cuarentena(
+        tipo_novedad_id = _tipo_novedad_documento_repetido(client, campaign_id)
+        payload_documento = {**payload}
+        if tipo_novedad_id is not None:
+            payload_documento["id_tipo_novedad"] = tipo_novedad_id
+        voter_id = _insertar_votante(
             client,
             campaign_id=campaign_id,
             user_id=user_id,
-            payload=payload,
+            payload=payload_documento,
             documento=documento,
             telefono=telefono,
             tipo_documento=tipo_documento,
             canal=canal,
-            tipo_coincidencia="cedula_exacta",
-            id_votante_conflicto=conflicto_cedula["id"],
-            similitud=None,
+            estado=ESTADO_CUARENTENA,
+            detalle_novedad=(
+                "Documento duplicado: coincide con "
+                f"{conflicto_cedula['nombres']} {conflicto_cedula['apellidos']} "
+                f"({tipo_documento} {documento})."
+            ),
         )
         return {
             "outcome": "quarantined",
-            "quarantine_id": quarantine_id,
+            "voter_id": voter_id,
             "match_type": "cedula_exacta",
         }
 
@@ -142,7 +186,7 @@ def register_voter(
             payload["apellidos"],
         )
         if conflicto_telefono:
-            quarantine_id = _crear_cuarentena(
+            voter_id = _insertar_votante(
                 client,
                 campaign_id=campaign_id,
                 user_id=user_id,
@@ -151,13 +195,17 @@ def register_voter(
                 telefono=telefono,
                 tipo_documento=tipo_documento,
                 canal=canal,
-                tipo_coincidencia="telefono_similitud_nombre",
-                id_votante_conflicto=conflicto_telefono["id"],
-                similitud=conflicto_telefono["similitud"],
+                estado=ESTADO_CUARENTENA,
+                detalle_novedad=(
+                    "Teléfono y nombre similares a "
+                    f"{conflicto_telefono['nombres']} "
+                    f"{conflicto_telefono['apellidos']} "
+                    f"({tipo_documento} {documento})."
+                ),
             )
             return {
                 "outcome": "quarantined",
-                "quarantine_id": quarantine_id,
+                "voter_id": voter_id,
                 "match_type": "telefono_similitud_nombre",
             }
 
@@ -316,7 +364,7 @@ def _buscar_por_documento(
         .eq("id_campana", campaign_id)
         .eq("documento", documento)
         .eq("tipo_documento", tipo_documento)
-        .in_("estado", estados_votante_para_consulta(client))
+        .in_("estado", estados_para_conflicto_documento(client))
         .limit(1)
         .execute()
     )
@@ -348,51 +396,6 @@ def _buscar_por_telefono_y_nombre(
     return None
 
 
-def _crear_cuarentena(
-    client: Client,
-    *,
-    campaign_id: str,
-    user_id: str | None,
-    payload: RegisterVoterInput,
-    documento: str,
-    telefono: str | None,
-    tipo_documento: str,
-    canal: str,
-    tipo_coincidencia: str,
-    id_votante_conflicto: str,
-    similitud: float | None,
-) -> str:
-    row = {
-        "id_campana": campaign_id,
-        "nombres": payload["nombres"].strip(),
-        "apellidos": payload["apellidos"].strip(),
-        "documento": documento,
-        "tipo_documento": tipo_documento,
-        "sexo": payload.get("sexo"),
-        "fecha_nacimiento": payload.get("fecha_nacimiento"),
-        "telefono": telefono,
-        "direccion": payload.get("direccion"),
-        "id_lugar_trabajo": payload.get("id_lugar_trabajo"),
-        "id_puesto_votacion": payload.get("id_puesto_votacion"),
-        "id_departamento": payload.get("id_departamento"),
-        "id_municipio": payload.get("id_municipio"),
-        "id_barrio_votante": payload.get("id_barrio_votante"),
-        "mesa": payload.get("mesa"),
-        "id_rol": payload.get("id_rol"),
-        "id_lider_directo": payload.get("id_lider_directo"),
-        "id_votante_conflicto": id_votante_conflicto,
-        "tipo_coincidencia": tipo_coincidencia,
-        "similitud_nombre": similitud,
-        "canal_origen": canal,
-        "creado_por": user_id,
-        "estado": "pendiente",
-    }
-    result = client.table("cuarentena_votantes").insert(row).execute()
-    if not result.data:
-        raise RuntimeError("No se pudo crear el registro en cuarentena.")
-    return result.data[0]["id"]
-
-
 def _insertar_votante(
     client: Client,
     *,
@@ -403,6 +406,8 @@ def _insertar_votante(
     telefono: str | None,
     tipo_documento: str,
     canal: str,
+    estado: str | None = None,
+    detalle_novedad: str | None = None,
 ) -> str:
     row = {
         "id_campana": campaign_id,
@@ -424,12 +429,12 @@ def _insertar_votante(
         "id_lider_directo": payload.get("id_lider_directo"),
         "canal_origen": canal,
         "creado_por": user_id,
-        "estado": estado_inicial_votante(client),
+        "estado": estado or estado_inicial_votante(client),
     }
     if payload.get("id_tipo_novedad"):
         row["id_tipo_novedad"] = payload["id_tipo_novedad"]
-    if payload.get("detalle_novedad"):
-        row["detalle_novedad"] = payload["detalle_novedad"]
+    if detalle_novedad or payload.get("detalle_novedad"):
+        row["detalle_novedad"] = detalle_novedad or payload["detalle_novedad"]
     result = client.table("votantes").insert(row).execute()
     if not result.data:
         raise RuntimeError("No se pudo registrar el votante.")

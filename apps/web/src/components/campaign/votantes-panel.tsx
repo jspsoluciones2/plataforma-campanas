@@ -203,6 +203,7 @@ export function VotantesPanel({
     if (filters.id_rol) q = q.eq("id_rol", filters.id_rol);
     if (fixedEstado) q = q.eq("estado", fixedEstado);
     else if (filters.estado) q = q.eq("estado", filters.estado);
+    else q = q.neq("estado", "en_cuarentena");
     return q;
   }, [filters, barrios, fixedEstado]);
 
@@ -587,7 +588,9 @@ export function VotantesPanel({
                     onChange={(e) => changeFilter("estado", e.target.value)}
                     className={platformSelectClass}
                   >
-                    {ESTADOS.map((s) => (
+                    {ESTADOS.filter(
+                      (s) => s.value !== "en_cuarentena"
+                    ).map((s) => (
                       <option key={s.value} value={s.value}>
                         {s.label}
                       </option>

@@ -6,7 +6,7 @@ type FlaskErrorBody = {
 
 export type RegisterVoterFlaskResult =
   | { outcome: "created"; voter_id: string }
-  | { outcome: "quarantined"; quarantine_id: string; match_type: string }
+  | { outcome: "quarantined"; match_type: string; voter_id: string }
   | { outcome: "validation_error"; errors: string[] };
 
 function flaskBaseUrl(): string {

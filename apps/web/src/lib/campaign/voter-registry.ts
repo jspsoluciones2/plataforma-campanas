@@ -9,7 +9,41 @@ import {
 import { JERARQUIA_MIN, liderJerarquiaValida } from "@/lib/campaign/roles";
 
 const ESTADOS_ACTIVOS = ["activo", "pendiente_verificacion"] as const;
+const ESTADOS_DUPLICADO_DOCUMENTO = [
+  "activo",
+  "pendiente_verificacion",
+  "en_cuarentena",
+] as const;
 const UMBRAL_SIMILITUD_NOMBRE = 0.85;
+const NOVEDAD_DOCUMENTO_REPETIDO = "Documento Repetido";
+
+async function obtenerTipoNovedadDocumentoRepetido(
+  supabase: SupabaseClient,
+  campaignId: number
+): Promise<number | null> {
+  const buscar = async () => {
+    const { data } = await supabase
+      .from("tipos_novedad")
+      .select("id")
+      .eq("id_campana", campaignId)
+      .ilike("novedad", NOVEDAD_DOCUMENTO_REPETIDO)
+      .limit(1)
+      .maybeSingle();
+    return (data?.id as number | undefined) ?? null;
+  };
+
+  const existente = await buscar();
+  if (existente != null) return existente;
+
+  const { data, error } = await supabase
+    .from("tipos_novedad")
+    .insert({ id_campana: campaignId, novedad: NOVEDAD_DOCUMENTO_REPETIDO })
+    .select("id")
+    .single();
+
+  if (!error && data?.id != null) return data.id as number;
+  return buscar();
+}
 
 export type RegisterVoterInput = {
   nombres: string;
@@ -33,7 +67,7 @@ export type RegisterVoterInput = {
 
 export type RegisterVoterResult =
   | { outcome: "created"; voter_id: number }
-  | { outcome: "quarantined"; quarantine_id: number; match_type: string }
+  | { outcome: "quarantined"; match_type: string; voter_id: number }
   | { outcome: "validation_error"; errors: string[] };
 
 export async function registerVoter(
@@ -78,7 +112,11 @@ export async function registerVoter(
     tipoDocumento
   );
   if (conflictoCedula) {
-    const quarantineId = await crearCuarentena(supabase, {
+    const tipoNovedadId = await obtenerTipoNovedadDocumentoRepetido(
+      supabase,
+      campaignId
+    );
+    const voterId = await insertarVotante(supabase, {
       campaignId,
       userId,
       payload: payloadFinal,
@@ -86,19 +124,19 @@ export async function registerVoter(
       telefono,
       tipoDocumento,
       canal,
-      tipoCoincidencia: "cedula_exacta",
-      idVotanteConflicto: conflictoCedula.id,
-      similitud: null,
+      estado: "en_cuarentena",
+      idTipoNovedad: tipoNovedadId,
+      detalleNovedad: `Documento duplicado: coincide con ${conflictoCedula.nombres} ${conflictoCedula.apellidos} (${tipoDocumento} ${documento}).`,
     });
-    if (!quarantineId) {
+    if (typeof voterId === "object") {
       return {
         outcome: "validation_error",
-        errors: ["No se pudo crear el registro en cuarentena."],
+        errors: [voterId.error],
       };
     }
     return {
       outcome: "quarantined",
-      quarantine_id: quarantineId,
+      voter_id: voterId,
       match_type: "cedula_exacta",
     };
   }
@@ -112,7 +150,7 @@ export async function registerVoter(
       payload.apellidos
     );
     if (conflictoTelefono) {
-      const quarantineId = await crearCuarentena(supabase, {
+      const voterId = await insertarVotante(supabase, {
         campaignId,
         userId,
         payload: payloadFinal,
@@ -120,19 +158,18 @@ export async function registerVoter(
         telefono,
         tipoDocumento,
         canal,
-        tipoCoincidencia: "telefono_similitud_nombre",
-        idVotanteConflicto: conflictoTelefono.id,
-        similitud: conflictoTelefono.similitud,
+        estado: "en_cuarentena",
+        detalleNovedad: `Teléfono y nombre similares a ${conflictoTelefono.nombres} ${conflictoTelefono.apellidos} (${tipoDocumento} ${documento}).`,
       });
-      if (!quarantineId) {
+      if (typeof voterId === "object") {
         return {
           outcome: "validation_error",
-          errors: ["No se pudo crear el registro en cuarentena."],
+          errors: [voterId.error],
         };
       }
       return {
         outcome: "quarantined",
-        quarantine_id: quarantineId,
+        voter_id: voterId,
         match_type: "telefono_similitud_nombre",
       };
     }
@@ -271,7 +308,7 @@ async function buscarPorDocumento(
     .eq("id_campana", campaignId)
     .eq("documento", documento)
     .eq("tipo_documento", tipoDocumento)
-    .in("estado", [...ESTADOS_ACTIVOS])
+    .in("estado", [...ESTADOS_DUPLICADO_DOCUMENTO])
     .limit(1)
     .maybeSingle();
 
@@ -300,60 +337,16 @@ async function buscarPorTelefonoYNombre(
       row.apellidos
     );
     if (ratio >= UMBRAL_SIMILITUD_NOMBRE) {
-      return { id: row.id, similitud: ratio };
+      return {
+        id: row.id,
+        nombres: row.nombres,
+        apellidos: row.apellidos,
+        similitud: ratio,
+      };
     }
   }
 
   return null;
-}
-
-async function crearCuarentena(
-  supabase: SupabaseClient,
-  options: {
-    campaignId: number;
-    userId: string;
-    payload: RegisterVoterInput;
-    documento: string;
-    telefono: string | null;
-    tipoDocumento: string;
-    canal: string;
-    tipoCoincidencia: string;
-    idVotanteConflicto: number;
-    similitud: number | null;
-  }
-) {
-  const { error, data } = await supabase
-    .from("cuarentena_votantes")
-    .insert({
-      id_campana: options.campaignId,
-      nombres: options.payload.nombres.trim(),
-      apellidos: options.payload.apellidos.trim(),
-      documento: options.documento,
-      tipo_documento: options.tipoDocumento,
-      sexo: options.payload.sexo || null,
-      telefono: options.telefono,
-      fecha_nacimiento: options.payload.fecha_nacimiento || null,
-      direccion: options.payload.direccion || null,
-      id_puesto_votacion: options.payload.id_puesto_votacion || null,
-      id_lugar_trabajo: options.payload.id_lugar_trabajo || null,
-      id_departamento: options.payload.id_departamento || null,
-      id_municipio: options.payload.id_municipio || null,
-      id_barrio_votante: options.payload.id_barrio_votante || null,
-      mesa: options.payload.mesa || null,
-      id_rol: options.payload.id_rol || null,
-      id_lider_directo: options.payload.id_lider_directo || null,
-      id_votante_conflicto: options.idVotanteConflicto,
-      tipo_coincidencia: options.tipoCoincidencia,
-      similitud_nombre: options.similitud,
-      canal_origen: options.canal,
-      creado_por: options.userId,
-      estado: "pendiente",
-    })
-    .select("id")
-    .single();
-
-  if (error) return null;
-  return data.id as number;
 }
 
 async function insertarVotante(
@@ -366,6 +359,9 @@ async function insertarVotante(
     telefono: string | null;
     tipoDocumento: string;
     canal: string;
+    estado?: string;
+    idTipoNovedad?: number | null;
+    detalleNovedad?: string | null;
   }
 ): Promise<number | { error: string }> {
   const { error, data } = await supabase
@@ -390,7 +386,9 @@ async function insertarVotante(
       id_lider_directo: options.payload.id_lider_directo || null,
       canal_origen: options.canal,
       creado_por: options.userId,
-      estado: "pendiente_verificacion",
+      estado: options.estado ?? "pendiente_verificacion",
+      id_tipo_novedad: options.idTipoNovedad ?? null,
+      detalle_novedad: options.detalleNovedad ?? null,
     })
     .select("id")
     .single();
