@@ -238,7 +238,7 @@ export function MapaGeografico({ campaignId, alcance, filters }: Props) {
   const [generoMetric, setGeneroMetric] = useState<"total" | "masculino" | "femenino">("total");
   const [loadingGenero, setLoadingGenero] = useState(false);
 
-  const selectCol = alcance.tipo === "departamental" ? "id_municipio" : "id_departamento";
+  const selectCol = alcance.tipo === "nacional" ? "id_departamento" : "id_municipio";
   const areaLabel = alcance.tipo === "nacional" ? "Departamento" : "Municipio";
 
   // ── Fetch GeoJSON, mesas, and stats ───────────────────────────────────────
@@ -284,6 +284,7 @@ export function MapaGeografico({ campaignId, alcance, filters }: Props) {
         // Pre-fetch comuna IDs based on campaign alcance (puestos_votacion
         // lost id_campana in migration 033, so we filter via territorial chain).
         let comunaIds: string[] | null = null;
+        let municipiosAlcance: string[] = [];
 
         if (alcance.tipo === "municipal") {
           const { data: comunasData } = await supabase.current
@@ -297,6 +298,7 @@ export function MapaGeografico({ campaignId, alcance, filters }: Props) {
             .select("id")
             .eq("id_departamento", (alcance as any).id_departamento);
           const munIds = (municipiosData ?? []).map((m: any) => m.id);
+          municipiosAlcance = munIds;
 
           if (munIds.length > 0) {
             const { data: comunasData } = await supabase.current
@@ -348,7 +350,17 @@ export function MapaGeografico({ campaignId, alcance, filters }: Props) {
             .eq("id_campana", campaignId);
 
           if (alcance.tipo === "departamental") {
-            q = q.eq("id_departamento", (alcance as any).id_departamento);
+            const condiciones = [
+              `id_departamento.eq.${(alcance as any).id_departamento}`,
+            ];
+            if (municipiosAlcance.length > 0) {
+              condiciones.push(
+                `id_municipio.in.(${municipiosAlcance.join(",")})`
+              );
+            }
+            // Votantes sin ubicación capturados dentro del ámbito del equipo.
+            condiciones.push("and(id_departamento.is.null,id_municipio.is.null)");
+            q = q.or(condiciones.join(","));
           }
           if (alcance.tipo === "municipal") {
             q = q.eq("id_municipio", (alcance as any).id_municipio);
@@ -430,7 +442,19 @@ export function MapaGeografico({ campaignId, alcance, filters }: Props) {
           .eq("id_campana", campaignId);
 
         if (alcance.tipo === "departamental") {
-          q = q.eq("id_departamento", (alcance as any).id_departamento);
+          const { data: municipiosData } = await supabase.current
+            .from("municipios")
+            .select("id")
+            .eq("id_departamento", (alcance as any).id_departamento);
+          const munIds = (municipiosData ?? []).map((m: any) => m.id);
+          const condiciones = [
+            `id_departamento.eq.${(alcance as any).id_departamento}`,
+          ];
+          if (munIds.length > 0) {
+            condiciones.push(`id_municipio.in.(${munIds.join(",")})`);
+          }
+          condiciones.push("and(id_departamento.is.null,id_municipio.is.null)");
+          q = q.or(condiciones.join(","));
         }
         if (alcance.tipo === "municipal") {
           q = q.eq("id_municipio", (alcance as any).id_municipio);
@@ -515,7 +539,9 @@ export function MapaGeografico({ campaignId, alcance, filters }: Props) {
       totalMesas += stats[id].mesas;
       totalVotantes += stats[id].total;
       totalPuestos += stats[id].puestos;
-      if (stats[id].mesas > 0 || stats[id].total > 0) areaCount++;
+      if (stats[id].mesas > 0 || stats[id].total > 0) {
+        if (id !== "unknown") areaCount++;
+      }
     }
     return { totalMesas, totalVotantes, totalPuestos, areaCount };
   }, [stats]);
@@ -539,6 +565,7 @@ export function MapaGeografico({ campaignId, alcance, filters }: Props) {
   const maxValue = useMemo(() => {
     let max = 0;
     for (const id of Object.keys(stats)) {
+      if (id === "unknown") continue;
       const v = choroplethValue(id);
       if (v > max) max = v;
     }
@@ -551,6 +578,7 @@ export function MapaGeografico({ campaignId, alcance, filters }: Props) {
       ...Object.keys(generoPorArea),
     ]);
     return [...keySet]
+      .filter((id) => id !== "unknown")
       .map((id) => {
         const s = stats[id];
         const g = generoPorArea[id];
