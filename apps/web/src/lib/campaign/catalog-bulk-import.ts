@@ -4,7 +4,7 @@ import {
 } from "@/lib/campaign/catalog-bulk-config";
 import type { CatalogSegment } from "@/lib/campaign/catalog-nav";
 import { insertPuestoRow } from "@/lib/campaign/puestos";
-import { fetchTerritorioAlcance } from "@/lib/campaign/comunas";
+import { fetchComunasPorAlcance } from "@/lib/campaign/comunas";
 import { textoTitulo, textoTituloOpcional } from "@/lib/normalize-text";
 import type { ParsedBulkRow } from "@/lib/campaign/catalog-bulk-xlsx";
 
@@ -92,16 +92,7 @@ async function importPuestos(
   campaignId: number,
   rows: ParsedBulkRow[]
 ): Promise<BulkImportResult> {
-  const alcance = await fetchTerritorioAlcance(supabase, campaignId);
-
-  let comunaQ = supabase.from("comunas").select("id, nombre").order("nombre");
-  if (alcance.departamentos.length > 0) {
-    comunaQ = comunaQ.in("municipios.id_departamento", alcance.departamentos);
-  }
-  if (alcance.municipios.length > 0) {
-    comunaQ = comunaQ.in("id_municipio", alcance.municipios);
-  }
-  const { data: comunaData } = await comunaQ;
+  const comunaData = await fetchComunasPorAlcance(supabase, campaignId);
   const comunaMap = new Map<string, number>(
     (comunaData ?? []).map((c) => [claveNombre(c.nombre), c.id])
   );
@@ -344,16 +335,7 @@ async function importLugaresTrabajo(
   campaignId: number,
   rows: ParsedBulkRow[]
 ): Promise<BulkImportResult> {
-  const alcance = await fetchTerritorioAlcance(supabase, campaignId);
-
-  let comunaQ = supabase.from("comunas").select("id, nombre").order("nombre");
-  if (alcance.departamentos.length > 0) {
-    comunaQ = comunaQ.in("municipios.id_departamento", alcance.departamentos);
-  }
-  if (alcance.municipios.length > 0) {
-    comunaQ = comunaQ.in("id_municipio", alcance.municipios);
-  }
-  const { data: comunaData } = await comunaQ;
+  const comunaData = await fetchComunasPorAlcance(supabase, campaignId);
   const comunaMap = new Map<string, number>(
     (comunaData ?? []).map((c) => [claveNombre(c.nombre), c.id])
   );

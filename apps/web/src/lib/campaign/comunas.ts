@@ -96,24 +96,34 @@ export async function fetchComunasPorAlcance(
 ): Promise<{ id: number; nombre: string }[]> {
   const alcance = await fetchTerritorioAlcance(supabase, campaignId);
 
-  // Comunas dentro del territorio de la campaña.
-  // - Si el alcance define municipios → filtro directo por comunas.id_municipio.
-  // - Si el alcance define departamentos → filtro anidado vía municipios
-  //   (requiere incluir el embedding municipios en el select).
-  let columns = "id, nombre";
-  let query = supabase.from("comunas").select(columns).order("nombre") as any;
-
-  if (alcance.municipios.length > 0) {
-    query = query.in("id_municipio", alcance.municipios);
-  } else if (alcance.departamentos.length > 0) {
-    query = supabase
-      .from("comunas")
-      .select("id, nombre, municipios(id_departamento)")
-      .order("nombre")
-      .in("municipios.id_departamento", alcance.departamentos) as any;
+  // Resolver primero los municipios del alcance. Filtrar comunas por un
+  // embedding (municipios.id_departamento) sin !inner no restringe las filas
+  // padre en PostgREST y termina devolviendo comunas de todo el país.
+  let municipiosAlcance = alcance.municipios;
+  if (municipiosAlcance.length === 0 && alcance.departamentos.length > 0) {
+    const { data } = await supabase
+      .from("municipios")
+      .select("id")
+      .in("id_departamento", alcance.departamentos);
+    municipiosAlcance = (data ?? []).map((m) => m.id);
   }
 
-  const { data } = await query;
+  if (municipiosAlcance.length === 0) {
+    // Alcance nacional (o sin territorio definido): todas las comunas.
+    if (alcance.departamentos.length > 0) return [];
+    const { data } = await supabase
+      .from("comunas")
+      .select("id, nombre")
+      .order("nombre");
+    return data ?? [];
+  }
+
+  const { data } = await supabase
+    .from("comunas")
+    .select("id, nombre")
+    .in("id_municipio", municipiosAlcance)
+    .order("nombre");
+
   return data ?? [];
 }
 

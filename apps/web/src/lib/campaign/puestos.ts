@@ -1,6 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { isNumericSearchTerm } from "@/lib/campaign/catalog-codigo";
-import { fetchTerritorioAlcance } from "@/lib/campaign/comunas";
+import { fetchComunasPorAlcance } from "@/lib/campaign/comunas";
 
 export type PuestoListRow = {
   id: number;
@@ -26,18 +26,18 @@ export async function fetchPuestosList(
   options: { q: string; from: number; to: number }
 ) {
   const term = options.q.trim();
-  const alcance = await fetchTerritorioAlcance(supabase, campaignId);
+  const comunas = await fetchComunasPorAlcance(supabase, campaignId);
+  const comunaIds = comunas.map((c) => c.id);
 
   let query = supabase
     .from("puestos_votacion")
     .select(PUESTO_SELECT, { count: "exact" })
     .order("id");
 
-  if (alcance.departamentos.length > 0) {
-    query = query.in("comunas.municipios.id_departamento", alcance.departamentos);
-  }
-  if (alcance.municipios.length > 0) {
-    query = query.in("comunas.id_municipio", alcance.municipios);
+  if (comunaIds.length > 0) {
+    query = query.in("id_comuna", comunaIds);
+  } else {
+    query = query.limit(0);
   }
 
   if (term) {
