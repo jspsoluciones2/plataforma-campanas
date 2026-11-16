@@ -373,6 +373,10 @@ export function MapaGeografico({ campaignId, alcance, filters }: Props) {
               if (v) q = q.eq(k, v);
             }
           }
+          // Por defecto no se cuenta la cuarentena; solo si se filtra por ese estado.
+          if (!filters.estado && !extraFilters?.estado) {
+            q = q.neq("estado", "en_cuarentena");
+          }
 
           const { data, error } = await q;
           if (error) return {};
@@ -463,6 +467,7 @@ export function MapaGeografico({ campaignId, alcance, filters }: Props) {
         // distribution itself, so a pre-filtered sexo would make it useless.
         if (filters.id_rol) q = q.eq("id_rol", filters.id_rol);
         if (filters.estado) q = q.eq("estado", filters.estado);
+        if (!filters.estado) q = q.neq("estado", "en_cuarentena");
 
         const { data, error } = await q;
         if (error) throw error;
