@@ -22,6 +22,7 @@ import {
 } from "@/components/campaign/votantes-table";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import { asignarLideresDirectos } from "@/lib/campaign/lider-directo";
 import gsap from "gsap";
 import dynamic from "next/dynamic";
 import * as XLSX from "xlsx";
@@ -214,7 +215,7 @@ export function ReportesView({
     let q = supabase.current
       .from("votantes")
       .select(
-        `id, nombres, apellidos, documento, tipo_documento, sexo, telefono, fecha_nacimiento, direccion, mesa, estado, creado_en, id_tipo_novedad, detalle_novedad, roles(nombre), lugares_trabajo(nombre), puestos_votacion(nombre, municipio), lider_directo:votantes(nombres, apellidos)`
+        `id, nombres, apellidos, documento, tipo_documento, sexo, telefono, fecha_nacimiento, direccion, mesa, estado, creado_en, id_tipo_novedad, detalle_novedad, id_lider_directo, roles(nombre), lugares_trabajo(nombre), puestos_votacion(nombre, municipio)`
       )
       .eq("id_campana", campaignId)
       .order("creado_en", { ascending: false })
@@ -263,7 +264,11 @@ export function ReportesView({
     };
 
     setCardValues(newValues);
-    setVotantes((votersList ?? []) as unknown as VotanteListRow[]);
+    const votantesConLider = await asignarLideresDirectos(
+      supabase.current,
+      (votersList ?? []) as unknown as VotanteListRow[]
+    );
+    setVotantes(votantesConLider as VotanteListRow[]);
     setLoading(false);
   }, [filters, campaignId]);
 

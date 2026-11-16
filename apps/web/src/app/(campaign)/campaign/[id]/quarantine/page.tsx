@@ -1,5 +1,6 @@
 import { requireCampaignAccess } from "@/lib/campaign/access";
 import { VotantesPanel } from "@/components/campaign/votantes-panel";
+import { asignarLideresDirectos } from "@/lib/campaign/lider-directo";
 import {
   fetchDepartamentos,
   fetchMunicipios,
@@ -67,10 +68,9 @@ export default async function QuarantinePage({
       .select(
         `id, nombres, apellidos, documento, tipo_documento, sexo, telefono,
          fecha_nacimiento, direccion, estado, creado_en,
-         id_tipo_novedad, detalle_novedad,
+         id_tipo_novedad, detalle_novedad, id_lider_directo,
          roles(nombre), lugares_trabajo(nombre),
-         puestos_votacion(nombre, municipio),
-         lider_directo:votantes(nombres, apellidos)`
+         puestos_votacion(nombre, municipio)`
       )
       .eq("id_campana", campaignId)
       .eq("estado", ESTADO_CUARENTENA)
@@ -110,7 +110,7 @@ export default async function QuarantinePage({
       .maybeSingle(),
   ]);
 
-  const rows = votantes ?? [];
+  const rows = await asignarLideresDirectos(supabase, votantes ?? []);
 
   // Determinar ámbito territorial para preseleccionar residencia
   let alcance: AlcanceValue | undefined;

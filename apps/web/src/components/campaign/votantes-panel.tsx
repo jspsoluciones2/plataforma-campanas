@@ -24,6 +24,7 @@ import {
 } from "@/components/platform/platform-ui";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import { asignarLideresDirectos } from "@/lib/campaign/lider-directo";
 
 import type { AlcanceValue } from "@/components/campaign/mapa-geografico";
 
@@ -111,8 +112,7 @@ const LIST_COLUMNAS = `id, nombres, apellidos, documento, tipo_documento, sexo, 
   fecha_nacimiento, direccion, mesa, estado, creado_en, id_tipo_novedad, detalle_novedad,
   id_rol, id_lugar_trabajo, id_departamento, id_municipio, id_barrio_votante,
   id_lider_directo, id_puesto_votacion,
-  roles(nombre), lugares_trabajo(nombre), puestos_votacion(nombre, municipio),
-  lider_directo:votantes(nombres, apellidos)`;
+  roles(nombre), lugares_trabajo(nombre), puestos_votacion(nombre, municipio)`;
 
 export function VotantesPanel({
   campaignId,
@@ -221,7 +221,11 @@ export function VotantesPanel({
     );
     const { data, count, error } = await q;
     if (!error) {
-      setRows((data ?? []) as unknown as VotanteListRow[]);
+      const filas = await asignarLideresDirectos(
+        supabase.current,
+        (data ?? []) as unknown as VotanteListRow[]
+      );
+      setRows(filas as VotanteListRow[]);
       if (typeof count === "number") setTotal(count);
     }
     setLoading(false);
@@ -373,9 +377,13 @@ export function VotantesPanel({
       .select(LIST_COLUMNAS)
       .eq("id_campana", campaignId)
       .in("id", ids) as any;
-    const filas = (data ?? []).map((v: any) => {
+    const filasBase = await asignarLideresDirectos(
+      supabase.current,
+      (data ?? []) as unknown as VotanteListRow[]
+    );
+    const filas = filasBase.map((v) => {
       const puesto = primer(v.puestos_votacion);
-      const lider = primer(v.lider_directo);
+      const lider = v.lider_directo;
       return {
         "Nombre completo": `${v.nombres} ${v.apellidos}`,
         Documento: `${v.tipo_documento} ${v.documento}`,

@@ -4,6 +4,7 @@ import type { VotanteListRow } from "@/components/campaign/votantes-table";
 import type { AlcanceValue } from "@/components/campaign/mapa-geografico";
 import { createClient } from "@/lib/supabase/server";
 import { fetchPuestosPorAlcance } from "@/lib/campaign/comunas";
+import { asignarLideresDirectos } from "@/lib/campaign/lider-directo";
 
 export default async function ReportesPage({
   params,
@@ -41,7 +42,7 @@ export default async function ReportesPage({
     supabase
       .from("votantes")
       .select(
-        `id, nombres, apellidos, documento, tipo_documento, sexo, telefono, fecha_nacimiento, direccion, mesa, estado, creado_en, id_tipo_novedad, detalle_novedad, roles(nombre), lugares_trabajo(nombre), puestos_votacion(nombre, municipio), lider_directo:votantes(nombres, apellidos)`
+        `id, nombres, apellidos, documento, tipo_documento, sexo, telefono, fecha_nacimiento, direccion, mesa, estado, creado_en, id_tipo_novedad, detalle_novedad, id_lider_directo, roles(nombre), lugares_trabajo(nombre), puestos_votacion(nombre, municipio)`
       )
       .eq("id_campana", campaignId)
       .order("creado_en", { ascending: false })
@@ -87,6 +88,11 @@ export default async function ReportesPage({
   }
   // Si no hay fila en campana_territorio → nacional (no se asigna)
 
+  const votantesConLider = await asignarLideresDirectos(
+    supabase,
+    votantes ?? []
+  );
+
   return (
     <ReportesView
       campaignId={Number(id)}
@@ -96,7 +102,7 @@ export default async function ReportesPage({
       initialTiposNovedad={
         (tiposNovedad ?? []) as { id: number; novedad: string }[]
       }
-      initialVotantes={(votantes ?? []) as unknown as VotanteListRow[]}
+      initialVotantes={votantesConLider as unknown as VotanteListRow[]}
       initialAlcance={initialAlcance}
     />
   );
