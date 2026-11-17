@@ -48,6 +48,16 @@ type AreaStats = {
 
 type GeoStats = Record<string, AreaStats>;
 
+type PuestoDesgloseRow = {
+  id: number;
+  nombre: string;
+  comuna: string | null;
+  mesas: number;
+  votantes: number;
+};
+
+const PUESTOS_PAGE_SIZE = 10;
+
 const VOTANTE_METRICS: { key: MetricKey; label: string }[] = [
   { key: "total", label: "Total" },
   { key: "activos", label: "Activos" },
@@ -199,6 +209,13 @@ function fmt(n: number): string {
   return n.toLocaleString("es-CO");
 }
 
+function nombreRelacion(
+  rel: { nombre: string } | { nombre: string }[] | null | undefined
+): string | null {
+  if (!rel) return null;
+  return Array.isArray(rel) ? rel[0]?.nombre ?? null : rel.nombre;
+}
+
 // ─── Fit map to GeoJSON bounds ─────────────────────────────────────────────
 function FitBounds({ data }: { data: GeoJSON.FeatureCollection }) {
   const map = useMap();
@@ -237,6 +254,14 @@ export function MapaGeografico({ campaignId, alcance, filters }: Props) {
   const [generoPorArea, setGeneroPorArea] = useState<Record<string, GeneroArea>>({});
   const [generoMetric, setGeneroMetric] = useState<"total" | "masculino" | "femenino">("total");
   const [loadingGenero, setLoadingGenero] = useState(false);
+
+  const [puestosSearchInput, setPuestosSearchInput] = useState("");
+  const [puestosSearch, setPuestosSearch] = useState("");
+  const [puestosPage, setPuestosPage] = useState(1);
+  const [puestosRows, setPuestosRows] = useState<PuestoDesgloseRow[]>([]);
+  const [puestosTotal, setPuestosTotal] = useState(0);
+  const [puestosLoading, setPuestosLoading] = useState(false);
+  const [puestosError, setPuestosError] = useState<string | null>(null);
 
   const selectCol = alcance.tipo === "nacional" ? "id_departamento" : "id_municipio";
   const areaLabel = alcance.tipo === "nacional" ? "Departamento" : "Municipio";
@@ -495,6 +520,139 @@ export function MapaGeografico({ campaignId, alcance, filters }: Props) {
     loadGenero();
     return () => { cancelled = true; };
   }, [activeTab, campaignId, selectCol, alcance.tipo, (alcance as any).id_departamento, (alcance as any).id_municipio, filters.id_rol, filters.estado]);
+
+  // ── Puestos de votación del municipio seleccionado ──────────────────────
+  const mostrarPuestos =
+    alcance.tipo !== "nacional" && !!selectedId && activeTab === "mesas";
+  const puestosTotalPages = Math.max(
+    1,
+    Math.ceil(puestosTotal / PUESTOS_PAGE_SIZE)
+  );
+
+  useEffect(() => {
+    setPuestosPage(1);
+    setPuestosSearchInput("");
+    setPuestosSearch("");
+  }, [selectedId]);
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setPuestosSearch(puestosSearchInput.trim());
+    }, 250);
+    return () => clearTimeout(timer);
+  }, [puestosSearchInput]);
+
+  useEffect(() => {
+    if (puestosPage > puestosTotalPages) setPuestosPage(puestosTotalPages);
+  }, [puestosPage, puestosTotalPages]);
+
+  useEffect(() => {
+    if (!mostrarPuestos || !selectedId) {
+      setPuestosRows([]);
+      setPuestosTotal(0);
+      setPuestosLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+
+    async function loadPuestos() {
+      setPuestosLoading(true);
+      setPuestosError(null);
+
+      try {
+        const { data: comunasData, error: comunasError } = await supabase.current
+          .from("comunas")
+          .select("id")
+          .eq("id_municipio", selectedId);
+        if (comunasError) throw comunasError;
+
+        const comunaIds = ((comunasData ?? []) as any[]).map((c) => c.id);
+        if (comunaIds.length === 0) {
+          if (!cancelled) {
+            setPuestosRows([]);
+            setPuestosTotal(0);
+          }
+          return;
+        }
+
+        const from = (puestosPage - 1) * PUESTOS_PAGE_SIZE;
+        const to = from + PUESTOS_PAGE_SIZE - 1;
+
+        let query = supabase.current
+          .from("puestos_votacion")
+          .select("id, nombre, cantidad_mesas, comunas(nombre)", {
+            count: "exact",
+          })
+          .in("id_comuna", comunaIds)
+          .order("nombre");
+
+        if (puestosSearch) {
+          query = query.ilike("nombre", `%${puestosSearch}%`);
+        }
+
+        const { data, count, error } = await query.range(from, to);
+        if (error) throw error;
+
+        const puestos = (data ?? []) as any[];
+        const conteos = await Promise.all(
+          puestos.map(async (puesto) => {
+            let countQuery: any = supabase.current
+              .from("votantes")
+              .select("*", { count: "exact", head: true })
+              .eq("id_campana", campaignId)
+              .eq("id_puesto_votacion", puesto.id);
+            if (filters.sexo) countQuery = countQuery.eq("sexo", filters.sexo);
+            if (filters.id_rol) countQuery = countQuery.eq("id_rol", filters.id_rol);
+            if (filters.estado) {
+              countQuery = countQuery.eq("estado", filters.estado);
+            } else {
+              countQuery = countQuery.neq("estado", "en_cuarentena");
+            }
+            const { count: votantes, error: countError } = await countQuery;
+            if (countError) throw countError;
+            return [puesto.id, votantes ?? 0] as const;
+          })
+        );
+
+        if (cancelled) return;
+        const countMap = new Map<number, number>(conteos);
+        setPuestosRows(
+          puestos.map((puesto) => ({
+            id: puesto.id,
+            nombre: puesto.nombre,
+            comuna: nombreRelacion(puesto.comunas),
+            mesas: puesto.cantidad_mesas ?? 0,
+            votantes: countMap.get(puesto.id) ?? 0,
+          }))
+        );
+        setPuestosTotal(count ?? 0);
+      } catch (err) {
+        console.error("Error loading puestos:", err);
+        if (!cancelled) {
+          setPuestosRows([]);
+          setPuestosTotal(0);
+          setPuestosError("No se pudieron cargar los puestos.");
+        }
+      } finally {
+        if (!cancelled) setPuestosLoading(false);
+      }
+    }
+
+    loadPuestos();
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    mostrarPuestos,
+    selectedId,
+    puestosPage,
+    puestosSearch,
+    campaignId,
+    filters.sexo,
+    filters.id_rol,
+    filters.estado,
+  ]);
 
   // ── Fetch department boundary for hierarchy outline ─────────────────────
   useEffect(() => {
@@ -887,6 +1045,7 @@ export function MapaGeografico({ campaignId, alcance, filters }: Props) {
             </div>
 
             {activeTab === "genero" && selectedGenero ? (
+              <>
               <div className="mt-2 grid grid-cols-2 gap-2 text-xs">
                 <div>
                   <span className="text-neutral-500">Masculino</span>
@@ -907,6 +1066,16 @@ export function MapaGeografico({ campaignId, alcance, filters }: Props) {
                   </p>
                 </div>
               </div>
+              {alcance.tipo !== "nacional" && (
+                <button
+                  type="button"
+                  onClick={() => setActiveTab("mesas")}
+                  className="mt-2 text-[10px] font-medium text-blue-600 hover:text-blue-800"
+                >
+                  Ver puestos de votación →
+                </button>
+              )}
+              </>
             ) : (
               <>
                 <div className="mt-2 grid grid-cols-2 gap-2 text-xs">
@@ -1035,7 +1204,105 @@ export function MapaGeografico({ campaignId, alcance, filters }: Props) {
         </div>
         )}
 
-        {/* Area list */}
+        {mostrarPuestos ? (
+          <div className="flex-1 overflow-hidden flex flex-col">
+            <div className="flex items-center justify-between gap-2">
+              <button
+                type="button"
+                onClick={() => setSelectedId(null)}
+                className="flex items-center gap-1 text-xs font-semibold text-neutral-600 hover:text-neutral-900"
+              >
+                <ChevronRight className="size-3.5 rotate-180" />
+                Municipios
+              </button>
+              <span className="text-[10px] text-neutral-400">
+                {fmt(puestosTotal)} puesto{puestosTotal !== 1 ? "s" : ""}
+              </span>
+            </div>
+
+            <input
+              value={puestosSearchInput}
+              onChange={(e) => {
+                setPuestosSearchInput(e.target.value);
+                setPuestosPage(1);
+              }}
+              placeholder="Buscar puesto..."
+              className="mt-1 w-full rounded-md border border-neutral-200 bg-white px-2.5 py-1.5 text-xs text-neutral-700 placeholder:text-neutral-400 focus:border-blue-300 focus:outline-none"
+            />
+
+            <p className="mt-1.5 truncate text-[10px] font-medium text-neutral-500">
+              Puestos de {selectedName}
+            </p>
+
+            <div className="mt-1 flex-1 overflow-y-auto rounded-lg border border-neutral-200">
+              {puestosLoading ? (
+                <div className="flex items-center justify-center px-3 py-6 text-xs text-neutral-400">
+                  <div className="mr-2 size-3 animate-spin rounded-full border-2 border-neutral-300 border-t-neutral-600" />
+                  Cargando puestos...
+                </div>
+              ) : puestosError ? (
+                <div className="px-3 py-6 text-center text-xs text-red-600">
+                  {puestosError}
+                </div>
+              ) : puestosRows.length === 0 ? (
+                <div className="px-3 py-6 text-center text-xs text-neutral-400">
+                  {puestosSearch
+                    ? "Sin puestos que coincidan"
+                    : "Este municipio no tiene puestos registrados"}
+                </div>
+              ) : (
+                puestosRows.map((puesto) => (
+                  <div
+                    key={puesto.id}
+                    className="border-b border-neutral-100 px-3 py-2 last:border-b-0"
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0">
+                        <p className="truncate text-xs font-medium text-neutral-700">
+                          {puesto.nombre}
+                        </p>
+                        <p className="truncate text-[10px] text-neutral-400">
+                          {puesto.comuna ?? "Sin comuna"} · {fmt(puesto.mesas)} mesa
+                          {puesto.mesas !== 1 ? "s" : ""}
+                        </p>
+                      </div>
+                      <div className="flex flex-col items-end">
+                        <span className="text-xs font-bold text-emerald-700">
+                          {fmt(puesto.votantes)}
+                        </span>
+                        <span className="text-[10px] text-neutral-400">votantes</span>
+                      </div>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+
+            <div className="mt-1.5 flex items-center justify-between gap-2">
+              <button
+                type="button"
+                disabled={puestosPage <= 1 || puestosLoading}
+                onClick={() => setPuestosPage((p) => Math.max(1, p - 1))}
+                className="rounded-md border border-neutral-200 px-2 py-1 text-[10px] font-medium text-neutral-600 hover:bg-neutral-50 disabled:opacity-40"
+              >
+                Anterior
+              </button>
+              <span className="text-[10px] text-neutral-400">
+                {puestosPage} / {puestosTotalPages}
+              </span>
+              <button
+                type="button"
+                disabled={puestosPage >= puestosTotalPages || puestosLoading}
+                onClick={() =>
+                  setPuestosPage((p) => Math.min(puestosTotalPages, p + 1))
+                }
+                className="rounded-md border border-neutral-200 px-2 py-1 text-[10px] font-medium text-neutral-600 hover:bg-neutral-50 disabled:opacity-40"
+              >
+                Siguiente
+              </button>
+            </div>
+          </div>
+        ) : (
         <div className="flex-1 overflow-hidden flex flex-col">
           <button
             type="button"
@@ -1112,6 +1379,7 @@ export function MapaGeografico({ campaignId, alcance, filters }: Props) {
             </div>
           )}
         </div>
+        )}
       </div>
 
       {/* ─── Map ──────────────────────────────────────────────────────────── */}
